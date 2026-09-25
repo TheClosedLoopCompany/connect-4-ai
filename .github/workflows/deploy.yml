@@ -1,0 +1,41 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Deploys queue rather than cancel, so a wrangler deploy is never killed midway.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun run build
+
+      # No Cloudflare credential is stored in GitHub: the tclc-github-actions
+      # identity trades GitHub's OIDC token for CLOUDFLARE_API_TOKEN from
+      # Infisical (project connect4, prod). The identity is bound to this org
+      # and refs/heads/main, so forks and PR branches cannot get a token.
+      - uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 5cb2cd70-6e69-481e-a678-aa03a34ee846
+          project-slug: connect4
+          env-slug: prod
+          secret-name: CLOUDFLARE_API_TOKEN
+          # EU instance; the action otherwise defaults to app.infisical.com.
+          domain: https://eu.infisical.com
+
+      # Worker secrets (API keys, Turnstile) live in Cloudflare and survive deploys.
+      - run: bunx wrangler@4.140.0 deploy
+        env:
+          CLOUDFLARE_ACCOUNT_ID: 43d7104a71619f56a7f1d33f9caadfcc
