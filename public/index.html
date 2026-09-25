@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Can you beat AI in Connect Four?</title>
+<meta name="description" content="Play Connect 4 against GPT-6, JEV, or a perfect Negamax solver.">
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { display: grid; place-items: center; margin: 0; min-height: 100vh; }
+  main { display: grid; gap: 14px; justify-items: center; padding: 16px; }
+  h1 { margin: 0; font-size: 1.4rem; }
+  .settings { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: center; }
+  label { display: flex; gap: 6px; align-items: center; font-size: .9rem; }
+  select, button { font: inherit; padding: 4px 8px; }
+  /* Chips sit under the blue frame: each cell's ::after is the frame with a hole cut out. */
+  #board { display: grid; grid-template-columns: repeat(7, 1fr); position: relative; isolation: isolate;
+           overflow: hidden; background: Canvas; border: 10px solid #2456c9; border-radius: 12px; width: min(92vw, 460px); }
+  .cell { aspect-ratio: 1; background: none; border: none; padding: 0; cursor: pointer; position: relative; }
+  .cell::after { content: ""; position: absolute; inset: -0.5px; z-index: 2; pointer-events: none;
+                 background: radial-gradient(circle closest-side, transparent 83%, #2456c9 85%); }
+  .chip { position: absolute; inset: 8%; border-radius: 50%; z-index: 1; }
+  .chip.X { background: #e53935; }
+  .chip.O { background: #fdd835; }
+  .chip.win { box-shadow: inset 0 0 0 4px #fff; }
+  .chip.drop { animation: drop var(--t) cubic-bezier(.55, 0, 1, .45); }
+  .chip.last { animation: blink .3s ease-in-out 4 alternate; }
+  @keyframes drop {
+    from { transform: translateY(calc((var(--r) + 1) * -119%)); }
+    85% { transform: translateY(0); }
+    92% { transform: translateY(-6%); }
+    to { transform: translateY(0); }
+  }
+  @keyframes blink { to { opacity: .35; } }
+  #board.shake { animation: shake .6s cubic-bezier(.36, .07, .19, .97); }
+  @keyframes shake {
+    10%, 90% { transform: translateX(-2px); }
+    20%, 80% { transform: translateX(5px); }
+    30%, 50%, 70% { transform: translateX(-10px); }
+    40%, 60% { transform: translateX(10px); }
+  }
+  body { transition: background-color 1s, filter 1s; }
+  body.gloom { filter: grayscale(.7) brightness(.8); }
+  #board.locked .cell { cursor: default; }
+  #status { min-height: 1.4em; font-weight: 600; text-align: center; }
+  #celebration { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+  #error { color: #e53935; font-size: .85rem; max-width: 460px; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Can you beat AI in Connect Four?</h1>
+  <div class="settings">
+    <label>Opponent
+      <select id="engine">
+        <option value="luna">GPT-6 Luna</option>
+        <option value="sol">GPT-6 Sol</option>
+        <option value="astra">GPT-6 Astra</option>
+        <option value="jev">JEV</option>
+        <option value="negamax">Negamax</option>
+      </select>
+    </label>
+    <label id="effortWrap">Thinking
+      <select id="effort">
+        <option>none</option><option>low</option><option selected>medium</option><option>high</option>
+      </select>
+    </label>
+    <label>First move
+      <select id="first"><option value="X">You</option><option value="O">AI</option></select>
+    </label>
+    <button id="reset">New game</button>
+  </div>
+  <div id="status"></div>
+  <div id="board"></div>
+  <div id="error"></div>
+  <div id="turnstile"></div>
+</main>
+<canvas id="celebration"></canvas>
+<script>
+const ROWS = 6, COLS = 7;
+const $ = (id) => document.getElementById(id);
+let board, over, busy;
+const NAMES = { luna: "GPT-6 Luna", sol: "GPT-6 Sol", astra: "GPT-6 Astra", jev: "JEV", negamax: "Negamax" };
+
+const settings = JSON.parse(localStorage.getItem("c4") || "{}");
+settings.effort = { minimal: "none", xhigh: "high", max: "high" }[settings.effort] ?? settings.effort; // older versions
+for (const k of ["engine", "effort", "first"]) {
+  if (settings[k]) $(k).value = settings[k];
+  if ($(k).selectedIndex < 0) $(k).selectedIndex = 0; // e.g. saved "gpt"/"minimal" from an older version
+  $(k).onchange = () => { settings[k] = $(k).value; localStorage.setItem("c4", JSON.stringify(settings)); syncEffort(); };
+}
+// Astra is pinned to "low" server-side; show that, locked, without touching the saved choice.
+function syncEffort() {
+  const engine = $("engine").value;
+  $("effortWrap").style.display = ["jev", "negamax"].includes(engine) ? "none" : "";
+  $("effort").disabled = engine === "astra";
+  $("effort").value = engine === "astra" ? "low" : ["none", "low", "medium", "high"].includes(settings.effort) ? settings.effort : "medium";
+}
+syncEffort();
+
+function drop(col, p) {
+  for (let r = ROWS - 1; r >= 0; r--) if (board[r][col] === ".") { board[r][col] = p; return r; }
+  return -1;
+}
+
+function winLine(r, c) {
+  const p = board[r][c];
+  for (const [dr, dc] of [[0, 1], [1, 0], [1, 1], [1, -1]]) {
+    const line = [[r, c]];
+    for (const s of [1, -1]) {
+      let rr = r + dr * s, cc = c + dc * s;
+      while (board[rr]?.[cc] === p) { line.push([rr, cc]); rr += dr * s; cc += dc * s; }
+    }
+    if (line.length >= 4) return line;
+  }
+}
+
+let cells; // cells[r][c] -> button; built once per game so animations don't replay
+
+function buildBoard() {
+  $("board").innerHTML = "";
+  cells = board.map(() => []);
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const b = document.createElement("button");
+    b.className = "cell";
+    b.onclick = () => play(c);
+    cells[r][c] = b;
+    $("board").append(b);
+  }
+}
+
+const lock = () => $("board").classList.toggle("locked", over || busy);
+
+// Drops a chip with animation; resolves once it has landed.
+async function place(col, p) {
+  const r = drop(col, p);
+  const chip = document.createElement("div");
+  const t = 250 + r * 60;
+  chip.className = `chip ${p} drop`;
+  chip.style.setProperty("--r", r);
+  chip.style.setProperty("--t", t + "ms");
+  cells[r][col].append(chip);
+  const wasBusy = busy;
+  busy = true; lock();
+  await new Promise((ok) => setTimeout(ok, t));
+  busy = wasBusy;
+  chip.classList.remove("drop");
+  if (p === "O") {
+    document.querySelector(".chip.last")?.classList.remove("last");
+    chip.classList.add("last");
+  }
+  const win = winLine(r, col);
+  if (win) {
+    over = true;
+    for (const [wr, wc] of win) cells[wr][wc].firstChild.classList.add("win");
+    $("status").textContent = p === "X" ? "You win! 🎉" : `${NAMES[$("engine").value]} wins.`;
+    p === "X" ? celebrate() : mourn();
+  } else if (board[0].every((v) => v !== ".")) { over = true; $("status").textContent = "Draw."; }
+  lock();
+}
+
+async function play(col) {
+  if (over || busy || board[0][col] !== ".") return;
+  await place(col, "X");
+  if (!over) await aiTurn();
+}
+
+async function aiTurn() {
+  busy = true; $("error").textContent = "";
+  const name = NAMES[$("engine").value];
+  $("status").textContent = `${name} is thinking…`;
+  lock();
+  const t = performance.now();
+  try {
+    const data = $("engine").value === "negamax" ? await negamax(board) : await apiMove();
+    const secs = ((performance.now() - t) / 1000).toFixed(1);
+    const conf = data.confidence != null ? `, ${(data.confidence * 100).toFixed(0)}% confident` : data.detail ? `, ${data.detail}` : "";
+    $("status").textContent = `${name} played column ${data.column + 1} (${secs}s${conf}). Your turn.`;
+    if (data.note) $("error").textContent = data.note;
+    await place(data.column, "O");
+    busy = false;
+    lock();
+  } catch (e) {
+    busy = false;
+    $("error").textContent = e.message;
+    $("status").innerHTML = "";
+    const retry = document.createElement("button");
+    retry.textContent = "Retry AI move";
+    retry.onclick = aiTurn;
+    $("status").append(retry);
+    lock();
+  }
+}
+
+// Negamax runs locally in a Web Worker; the transposition table persists between moves.
+let solver;
+function negamax(board) {
+  solver ??= new Worker("/negamax.js");
+  return new Promise((ok, fail) => {
+    solver.onmessage = (e) => ok(e.data);
+    solver.onerror = (e) => fail(new Error(e.message || "Solver failed"));
+    solver.postMessage({ board });
+  });
+}
+
+// Bot protection: when the server has Turnstile configured, solve it once to get
+// a session cookie; redo it if the session expires.
+let session = fetch("/api/config").then((r) => r.json()).then((c) => c.turnstileSiteKey ? turnstileSession(c.turnstileSiteKey, c.turnstileAction) : null);
+let renewSession;
+function turnstileSession(sitekey, action) {
+  return new Promise((ok, fail) => {
+    const script = document.createElement("script");
+    script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+    script.onerror = () => fail(new Error("Could not load the bot check"));
+    script.onload = () => {
+      let resolve = ok, reject = fail;
+      const widget = turnstile.render("#turnstile", {
+        sitekey,
+        action,
+        appearance: "interaction-only",
+        callback: async (token) => {
+          const res = await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+          res.ok ? resolve() : reject(new Error("Bot check failed. Reload the page."));
+        },
+        "error-callback": () => reject(new Error("Bot check failed. Reload the page.")),
+      });
+      renewSession = () => new Promise((ok2, fail2) => { resolve = ok2; reject = fail2; turnstile.reset(widget); });
+    };
+    document.head.append(script);
+  });
+}
+
+async function apiMove(retried = false) {
+  await session;
+  const res = await fetch("/api/move", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ board, engine: $("engine").value, effort: $("effort").value }),
+  });
+  const data = await res.json();
+  if (res.status === 401 && !retried && renewSession) { session = renewSession(); return apiMove(true); }
+  if (!res.ok) throw new Error(data.error);
+  return data;
+}
+
+// Win/lose effects on a full-screen canvas; plain canvas, no library.
+function animate(bits, step, draw, ms) {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const cv = $("celebration"), ctx = cv.getContext("2d"), dpr = devicePixelRatio || 1;
+  cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; // also resets the transform
+  ctx.scale(dpr, dpr);
+  const start = performance.now();
+  (function frame(now) {
+    ctx.clearRect(0, 0, innerWidth, innerHeight);
+    ctx.globalAlpha = Math.min(1, Math.max(0, (start + ms - now) / 1000)); // fade out over the last second
+    for (const b of bits) { step(b); draw(ctx, b); }
+    if (now < start + ms) requestAnimationFrame(frame); else ctx.clearRect(0, 0, innerWidth, innerHeight);
+  })(start);
+}
+
+// Win: big confetti cannons from both bottom corners, sized to reach the top of the screen.
+function celebrate() {
+  const colors = ["#e53935", "#fdd835", "#2456c9", "#43a047", "#fb8c00", "#8e24aa", "#00acc1"];
+  const reach = Math.sqrt(2 * 0.35 * innerHeight * 1.3);
+  const bits = Array.from({ length: 400 }, (_, i) => {
+    const left = i % 2 === 0, angle = (left ? -65 : -115) * Math.PI / 180 + (Math.random() - 0.5) * 0.9;
+    const speed = reach * (0.6 + Math.random() * 0.6);
+    return {
+      x: left ? 0 : innerWidth, y: innerHeight, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+      w: 12 + Math.random() * 12, h: 7 + Math.random() * 7, rot: Math.random() * 6, vr: (Math.random() - 0.5) * 0.4,
+      flip: Math.random() * 6, color: colors[i % colors.length],
+    };
+  });
+  animate(bits, (b) => {
+    b.vy += 0.35; b.vx *= 0.985; b.vy *= 0.985; b.x += b.vx; b.y += b.vy; b.rot += b.vr; b.flip += 0.15;
+  }, (ctx, b) => {
+    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.rot); ctx.scale(1, Math.cos(b.flip)); // paper flutter
+    ctx.fillStyle = b.color; ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h); ctx.restore();
+  }, 4500);
+}
+
+// Lose: the board shakes and a gloomy rain of grey streaks pours down.
+function mourn() {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  $("board").classList.remove("shake"); void $("board").offsetWidth; $("board").classList.add("shake");
+  document.body.classList.add("gloom");
+  setTimeout(() => document.body.classList.remove("gloom"), 3500);
+  const bits = Array.from({ length: 260 }, () => ({
+    x: Math.random() * innerWidth * 1.2, y: -Math.random() * innerHeight, v: 9 + Math.random() * 8,
+    len: 18 + Math.random() * 26, alpha: 0.25 + Math.random() * 0.45,
+  }));
+  animate(bits, (b) => {
+    b.y += b.v; b.x -= b.v * 0.15;
+    if (b.y > innerHeight) { b.y = -b.len; b.x = Math.random() * innerWidth * 1.2; }
+  }, (ctx, b) => {
+    ctx.save(); ctx.globalAlpha *= b.alpha; ctx.strokeStyle = "#90a4ae"; ctx.lineWidth = 2; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.x - b.len * 0.15, b.y + b.len); ctx.stroke(); ctx.restore();
+  }, 3500);
+}
+
+function reset() {
+  board = Array.from({ length: ROWS }, () => Array(COLS).fill("."));
+  over = busy = false;
+  $("error").textContent = "";
+  $("status").textContent = "Your turn — click a column.";
+  buildBoard();
+  lock();
+  if ($("first").value === "O") aiTurn();
+}
+$("reset").onclick = reset;
+reset();
+</script>
+</body>
+</html>

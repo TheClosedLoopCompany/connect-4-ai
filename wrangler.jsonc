@@ -1,0 +1,21 @@
+{
+  "name": "dropfour",
+  "main": "worker.ts",
+  "compatibility_date": "2026-09-01",
+  "routes": [{ "pattern": "connect4.theclosedloop.co", "custom_domain": true }],
+  "workers_dev": false,
+  "vars": {
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFDoZxU_NBPfPV8c",
+    "TURNSTILE_HOSTNAMES": "connect4.theclosedloop.co"
+  },
+  // Secrets (wrangler secret put): OPENAI_API_KEY, TYPESAFE_API_KEY, TURNSTILE_SECRET, SESSION_SECRET
+  "assets": {
+    "directory": "./public",
+    "run_worker_first": ["/api/*"]
+  },
+  // 20 AI moves per minute per IP
+  "ratelimits": [
+    { "name": "MOVE_LIMITER", "namespace_id": "1001", "simple": { "limit": 20, "period": 60 } }
+  ],
+  "observability": { "enabled": true }
+}
