@@ -1,4 +1,6 @@
-# Can you beat AI in Connect Four?
+<p align="center"><img src="public/favicon.svg" width="120" alt="Connect Four icon"></p>
+
+<h1 align="center">Can you beat AI in Connect Four?</h1>
 
 Play Connect Four against different AIs: **[connect4.theclosedloop.co](https://connect4.theclosedloop.co)**
 
