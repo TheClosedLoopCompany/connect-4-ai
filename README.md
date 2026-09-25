@@ -11,7 +11,7 @@ Play Connect Four against different AIs: **[connect4.theclosedloop.co](https://c
 | JEV | [TypeSafe](https://docs.typesafe.ai) System One model; code computes each move's tactical effect, Jev judges |
 | Negamax | Perfect solver after [Pascal Pons](http://blog.gamesolver.org): alpha-beta, bitboards, transposition table. Runs in your browser; falls back to a deep search in the opening |
 
-No dependencies, just [Bun](https://bun.sh) and one HTML file.
+No dependencies, just [Bun](https://bun.sh) and one HTML file. The optional background music (calm, energetic, happy, futuristic) is synthesized live with Web Audio, so there are no audio files either.
 
 ## Run locally
 
