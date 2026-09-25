@@ -2,7 +2,7 @@
   "name": "drop-four",
   "private": true,
   "scripts": {
-    "build": "bun build negamax-worker.ts --outfile public/negamax.js --minify",
+    "build": "bun build solver-worker.ts --outfile public/solver.js --minify",
     "start": "bun run build && bun server.ts",
     "dev": "bun run build && bun --watch server.ts",
     "deploy": "bun run build && bunx wrangler deploy"

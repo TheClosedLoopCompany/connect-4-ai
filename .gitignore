@@ -5,7 +5,7 @@
 .dev.vars*
 
 # build output (bun run build)
-public/negamax.js
+public/solver.js
 
 # tooling
 node_modules/

@@ -1,5 +1,5 @@
 // API shared by the local Bun server (server.ts) and the Cloudflare Worker (worker.ts).
-// Negamax runs in the browser (negamax-worker.ts), so only the paid AIs live here.
+// The solver runs in the browser (solver-worker.ts), so only the paid AIs live here.
 //
 // Bot protection (enabled when TURNSTILE_SITE_KEY is set; fails closed if the
 // secrets are missing): the browser solves a Cloudflare Turnstile challenge once,
@@ -100,7 +100,7 @@ async function gptMove(b: Board, model: string, effort: string, key?: string) {
   return { column: JSON.parse(text).column - 1 };
 }
 
-// --- JEV ---------------------------------------------------------------------
+// --- Jev ---------------------------------------------------------------------
 // Jev is a System One model: fast judgment, no search, weak at counting/spatial
 // reading. Per TypeSafe's guidance the board facts are computed here and each
 // option describes what that move actually does; Jev judges which is best.
@@ -162,7 +162,7 @@ async function jevMove(b: Board, key?: string) {
     }),
   });
   const data: any = await res.json();
-  if (!res.ok) throw new Error(`JEV: ${data.error?.message ?? data.detail ?? res.status}`);
+  if (!res.ok) throw new Error(`Jev: ${data.error?.message ?? data.detail ?? res.status}`);
   const ans = data.answers.move;
   return { column: Number(String(ans.choice).replace("column_", "")) - 1, confidence: ans.confidence };
 }

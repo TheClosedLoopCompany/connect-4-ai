@@ -1,5 +1,5 @@
-// Web Worker running the Negamax solver in the browser, so it never blocks the
-// page and costs no server CPU. Built to public/negamax.js (`bun run build`).
+// Web Worker running the perfect solver in the browser, so it never blocks the
+// page and costs no server CPU. Built to public/solver.js (`bun run build`).
 import { bestMove } from "./solver";
 
 self.onmessage = (e: MessageEvent<{ board: string[][] }>) => {

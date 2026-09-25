@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Can you beat AI in Connect Four?</title>
-<meta name="description" content="Play Connect 4 against GPT-6, JEV, or a perfect Negamax solver.">
+<meta name="description" content="Play Connect 4 against GPT-6, Jev, or a perfect solver.">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="theme-color" content="#2456c9">
 <meta property="og:title" content="Can you beat AI in Connect Four?">
-<meta property="og:description" content="Play GPT-6, JEV, or a perfect Negamax solver.">
+<meta property="og:description" content="Play GPT-6, Jev, or a perfect solver.">
 <meta property="og:image" content="https://connect4.theclosedloop.co/og.png">
 <meta property="og:url" content="https://connect4.theclosedloop.co">
 <meta name="twitter:card" content="summary_large_image">
@@ -60,6 +60,9 @@
   #repo:hover { opacity: 1; }
   #repo svg { width: 26px; height: 26px; fill: currentColor; }
   #celebration { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+  #info { display: inline-grid; place-items: center; width: 1.2em; height: 1.2em; border: 1.5px solid currentColor;
+          border-radius: 50%; color: inherit; opacity: .6; text-decoration: none; font: italic 600 .8rem Georgia, serif; }
+  #info:hover { opacity: 1; }
   #error { color: #e53935; font-size: .85rem; max-width: 460px; text-align: center; }
 </style>
 </head>
@@ -75,9 +78,10 @@
         <option value="luna">GPT-6 Luna</option>
         <option value="sol">GPT-6 Sol</option>
         <option value="astra">GPT-6 Astra</option>
-        <option value="jev">JEV</option>
-        <option value="negamax">Negamax</option>
+        <option value="jev">Jev</option>
+        <option value="solver">Solver</option>
       </select>
+      <a id="info" target="_blank" rel="noopener">i</a>
     </label>
     <label id="effortWrap">Thinking
       <select id="effort">
@@ -105,9 +109,17 @@
 const ROWS = 6, COLS = 7;
 const $ = (id) => document.getElementById(id);
 let board, over, busy;
-const NAMES = { luna: "GPT-6 Luna", sol: "GPT-6 Sol", astra: "GPT-6 Astra", jev: "JEV", negamax: "Negamax" };
+const NAMES = { luna: "GPT-6 Luna", sol: "GPT-6 Sol", astra: "GPT-6 Astra", jev: "Jev", solver: "Solver" };
+const INFO = {
+  luna: "https://platform.openai.com/docs/models/gpt-6-luna",
+  sol: "https://platform.openai.com/docs/models/gpt-6-sol",
+  astra: "https://platform.openai.com/docs/models/gpt-6-astra",
+  jev: "https://docs.typesafe.ai",
+  solver: "http://blog.gamesolver.org",
+};
 
 const settings = JSON.parse(localStorage.getItem("c4") || "{}");
+if (settings.engine === "negamax") settings.engine = "solver";
 settings.effort = { minimal: "none", xhigh: "high", max: "high" }[settings.effort] ?? settings.effort; // older versions
 for (const k of ["engine", "effort", "first", "music"]) {
   if (settings[k]) $(k).value = settings[k];
@@ -117,7 +129,11 @@ for (const k of ["engine", "effort", "first", "music"]) {
 // Astra is pinned to "low" server-side; show that, locked, without touching the saved choice.
 // The field always stays in place (greyed out when it doesn't apply) so the layout doesn't jump.
 function syncEffort() {
-  const engine = $("engine").value, fixed = { astra: "low", jev: "", negamax: "" }[engine];
+  const engine = $("engine").value;
+  $("info").href = INFO[engine];
+  $("info").setAttribute("aria-label", `About ${NAMES[engine]}`);
+  $("info").title = `About ${NAMES[engine]}`;
+  const fixed = { astra: "low", jev: "", solver: "" }[engine];
   $("effort").disabled = fixed !== undefined;
   $("effortWrap").classList.toggle("off", fixed !== undefined);
   $("effort").value = fixed ?? (["none", "low", "medium", "high"].includes(settings.effort) ? settings.effort : "medium");
@@ -198,7 +214,7 @@ async function aiTurn() {
   lock();
   const t = performance.now();
   try {
-    const data = $("engine").value === "negamax" ? await negamax(board) : await apiMove();
+    const data = $("engine").value === "solver" ? await solverMove(board) : await apiMove();
     const secs = ((performance.now() - t) / 1000).toFixed(1);
     const conf = data.confidence != null ? `, ${(data.confidence * 100).toFixed(0)}% confident` : data.detail ? `, ${data.detail}` : "";
     $("status").textContent = `${name} played column ${data.column + 1} (${secs}s${conf}). Your turn.`;
@@ -218,10 +234,10 @@ async function aiTurn() {
   }
 }
 
-// Negamax runs locally in a Web Worker; the transposition table persists between moves.
+// The solver runs locally in a Web Worker; the transposition table persists between moves.
 let solver;
-function negamax(board) {
-  solver ??= new Worker("/negamax.js");
+function solverMove(board) {
+  solver ??= new Worker("/solver.js");
   return new Promise((ok, fail) => {
     solver.onmessage = (e) => ok(e.data);
     solver.onerror = (e) => fail(new Error(e.message || "Solver failed"));
