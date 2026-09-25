@@ -7,15 +7,18 @@
 <meta name="description" content="Play Connect 4 against GPT-6, JEV, or a perfect Negamax solver.">
 <style>
   :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-  body { display: grid; place-items: center; margin: 0; min-height: 100vh; }
-  main { display: grid; gap: 14px; justify-items: center; padding: 16px; }
+  *, *::before, *::after { box-sizing: border-box; }
+  /* dvh = the visible viewport on phones, so nothing scrolls when it fits; no rubber-band bounce. */
+  html, body { overscroll-behavior: none; overflow-x: hidden; }
+  body { display: grid; place-items: center; margin: 0; min-height: 100vh; min-height: 100dvh; }
+  main { display: grid; gap: 14px; justify-items: center; padding: 16px 12px; width: 100%; max-width: 504px; }
   h1 { margin: 0; font-size: 1.4rem; }
   .settings { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: center; }
   label { display: flex; gap: 6px; align-items: center; font-size: .9rem; }
-  select, button { font: inherit; padding: 4px 8px; }
+  select, button { font: inherit; padding: 4px 8px; touch-action: manipulation; }
   /* Chips sit under the blue frame: each cell's ::after is the frame with a hole cut out. */
   #board { display: grid; grid-template-columns: repeat(7, 1fr); position: relative; isolation: isolate;
-           overflow: hidden; background: Canvas; border: 10px solid #2456c9; border-radius: 12px; width: min(92vw, 460px); }
+           overflow: hidden; background: Canvas; border: 10px solid #2456c9; border-radius: 12px; width: 100%; }
   .cell { aspect-ratio: 1; background: none; border: none; padding: 0; cursor: pointer; position: relative; }
   .cell::after { content: ""; position: absolute; inset: -0.5px; z-index: 2; pointer-events: none;
                  background: radial-gradient(circle closest-side, transparent 83%, #2456c9 85%); }
@@ -253,15 +256,19 @@ async function apiMove(retried = false) {
 // Win/lose effects on a full-screen canvas; plain canvas, no library.
 function animate(bits, step, draw, ms) {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  const cv = $("celebration"), ctx = cv.getContext("2d"), dpr = devicePixelRatio || 1;
-  cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; // also resets the transform
-  ctx.scale(dpr, dpr);
+  const cv = $("celebration"), ctx = cv.getContext("2d"), dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
   const start = performance.now();
+  let last = start;
   (function frame(now) {
-    ctx.clearRect(0, 0, innerWidth, innerHeight);
+    // Physics is time-based (k = frames at 120 fps), so 60 Hz phones aren't in slow motion.
+    const k = Math.min((now - last) / (1000 / 120), 6);
+    last = now;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cv.width, cv.height);
     ctx.globalAlpha = Math.min(1, Math.max(0, (start + ms - now) / 1000)); // fade out over the last second
-    for (const b of bits) { step(b); draw(ctx, b); }
-    if (now < start + ms) requestAnimationFrame(frame); else ctx.clearRect(0, 0, innerWidth, innerHeight);
+    for (const b of bits) { step(b, k); draw(ctx, b, dpr); }
+    if (now < start + ms) requestAnimationFrame(frame); else ctx.clearRect(0, 0, cv.width, cv.height);
   })(start);
 }
 
@@ -269,7 +276,8 @@ function animate(bits, step, draw, ms) {
 function celebrate() {
   const colors = ["#e53935", "#fdd835", "#2456c9", "#43a047", "#fb8c00", "#8e24aa", "#00acc1"];
   const reach = Math.sqrt(2 * 0.35 * innerHeight * 1.3);
-  const bits = Array.from({ length: 400 }, (_, i) => {
+  const count = Math.round(Math.min(400, Math.max(160, innerWidth * innerHeight / 2600))); // fewer on phones
+  const bits = Array.from({ length: count }, (_, i) => {
     const left = i % 2 === 0, angle = (left ? -65 : -115) * Math.PI / 180 + (Math.random() - 0.5) * 0.9;
     const speed = reach * (0.6 + Math.random() * 0.6);
     return {
@@ -278,11 +286,14 @@ function celebrate() {
       flip: Math.random() * 6, color: colors[i % colors.length],
     };
   });
-  animate(bits, (b) => {
-    b.vy += 0.35; b.vx *= 0.985; b.vy *= 0.985; b.x += b.vx; b.y += b.vy; b.rot += b.vr; b.flip += 0.15;
-  }, (ctx, b) => {
-    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.rot); ctx.scale(1, Math.cos(b.flip)); // paper flutter
-    ctx.fillStyle = b.color; ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h); ctx.restore();
+  animate(bits, (b, k) => {
+    const drag = 0.985 ** k;
+    b.vy += 0.35 * k; b.vx *= drag; b.vy *= drag; b.x += b.vx * k; b.y += b.vy * k; b.rot += b.vr * k; b.flip += 0.15 * k;
+  }, (ctx, b, dpr) => {
+    // rotate + paper-flutter squash + device scale in one transform (no save/restore)
+    const cos = Math.cos(b.rot) * dpr, sin = Math.sin(b.rot) * dpr, sy = Math.cos(b.flip);
+    ctx.setTransform(cos, sin, -sin * sy, cos * sy, b.x * dpr, b.y * dpr);
+    ctx.fillStyle = b.color; ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h);
   }, 4500);
 }
 
@@ -296,11 +307,12 @@ function mourn() {
     x: Math.random() * innerWidth * 1.2, y: -Math.random() * innerHeight, v: 9 + Math.random() * 8,
     len: 18 + Math.random() * 26, alpha: 0.25 + Math.random() * 0.45,
   }));
-  animate(bits, (b) => {
-    b.y += b.v; b.x -= b.v * 0.15;
+  animate(bits, (b, k) => {
+    b.y += b.v * k; b.x -= b.v * 0.15 * k;
     if (b.y > innerHeight) { b.y = -b.len; b.x = Math.random() * innerWidth * 1.2; }
-  }, (ctx, b) => {
-    ctx.save(); ctx.globalAlpha *= b.alpha; ctx.strokeStyle = "#90a4ae"; ctx.lineWidth = 2; ctx.lineCap = "round";
+  }, (ctx, b, dpr) => {
+    ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.globalAlpha *= b.alpha; ctx.strokeStyle = "#90a4ae"; ctx.lineWidth = 2; ctx.lineCap = "round";
     ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.x - b.len * 0.15, b.y + b.len); ctx.stroke(); ctx.restore();
   }, 3500);
 }
