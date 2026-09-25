@@ -15,6 +15,7 @@
   h1 { margin: 0; font-size: 1.4rem; }
   .settings { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: center; }
   label { display: flex; gap: 6px; align-items: center; font-size: .9rem; }
+  label.off { opacity: .5; }
   select, button { font: inherit; padding: 4px 8px; touch-action: manipulation; }
   /* Chips sit under the blue frame: each cell's ::after is the frame with a hole cut out. */
   #board { display: grid; grid-template-columns: repeat(7, 1fr); position: relative; isolation: isolate;
@@ -72,7 +73,7 @@
     </label>
     <label id="effortWrap">Thinking
       <select id="effort">
-        <option>none</option><option>low</option><option selected>medium</option><option>high</option>
+        <option value="" hidden>n/a</option><option>none</option><option>low</option><option selected>medium</option><option>high</option>
       </select>
     </label>
     <label>First move
@@ -100,11 +101,12 @@ for (const k of ["engine", "effort", "first"]) {
   $(k).onchange = () => { settings[k] = $(k).value; localStorage.setItem("c4", JSON.stringify(settings)); syncEffort(); };
 }
 // Astra is pinned to "low" server-side; show that, locked, without touching the saved choice.
+// The field always stays in place (greyed out when it doesn't apply) so the layout doesn't jump.
 function syncEffort() {
-  const engine = $("engine").value;
-  $("effortWrap").style.display = ["jev", "negamax"].includes(engine) ? "none" : "";
-  $("effort").disabled = engine === "astra";
-  $("effort").value = engine === "astra" ? "low" : ["none", "low", "medium", "high"].includes(settings.effort) ? settings.effort : "medium";
+  const engine = $("engine").value, fixed = { astra: "low", jev: "", negamax: "" }[engine];
+  $("effort").disabled = fixed !== undefined;
+  $("effortWrap").classList.toggle("off", fixed !== undefined);
+  $("effort").value = fixed ?? (["none", "low", "medium", "high"].includes(settings.effort) ? settings.effort : "medium");
 }
 syncEffort();
 
