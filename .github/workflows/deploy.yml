@@ -23,13 +23,14 @@ jobs:
 
       # No Cloudflare credential is stored in GitHub: the tclc-github-actions
       # identity trades GitHub's OIDC token for CLOUDFLARE_API_TOKEN from
-      # Infisical (project connect4, prod). The identity is bound to this org
-      # and refs/heads/main, so forks and PR branches cannot get a token.
+      # Infisical (project cloudflare-deploy, prod — shared by all TCLC
+      # Cloudflare deploys). The identity is bound to this org and
+      # refs/heads/main, so forks and PR branches cannot get a token.
       - uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
           identity-id: 5cb2cd70-6e69-481e-a678-aa03a34ee846
-          project-slug: connect4
+          project-slug: cloudflare-deploy
           env-slug: prod
           secret-name: CLOUDFLARE_API_TOKEN
           # EU instance; the action otherwise defaults to app.infisical.com.
